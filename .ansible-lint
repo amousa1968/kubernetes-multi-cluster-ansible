@@ -1,0 +1,13 @@
+---
+# Ansible Lint configuration
+parseable: true
+quiet: true
+skip_list:
+  - 'schema'
+  - 'no-handler'
+  - 'fqcn-builtins'
+  - 'fqcn[action-core]'
+  - 'name[missing]'
+  - 'name[template]'
+  - 'name[play]'
+use_default_rules: true
