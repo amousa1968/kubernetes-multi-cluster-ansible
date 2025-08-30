@@ -1,0 +1,6 @@
+---
+# Master node specific variables
+kube_apiserver_advertise_address: "{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"
+kube_apiserver_bind_port: 6443
+etcd_data_dir: "/var/lib/etcd"
+control_plane_endpoint: "loadbalancer.example.com:6443"

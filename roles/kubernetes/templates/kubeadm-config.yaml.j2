@@ -1,0 +1,35 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+nodeRegistration:
+  criSocket: unix:///var/run/dockershim.sock
+  name: "{{ inventory_hostname }}"
+  kubeletExtraArgs:
+    cgroup-driver: systemd
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: {{ k8s_version }}
+controlPlaneEndpoint: "{{ control_plane_endpoint }}"
+networking:
+  podSubnet: "{{ pod_network_cidr }}"
+  serviceSubnet: "{{ service_cidr }}"
+  dnsDomain: cluster.local
+apiServer:
+  extraArgs:
+    advertise-address: "{{ kube_apiserver_advertise_address }}"
+    bind-address: 0.0.0.0
+  extraVolumes: []
+controllerManager:
+  extraArgs: {}
+scheduler:
+  extraArgs: {}
+etcd:
+  local:
+    dataDir: "{{ etcd_data_dir }}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+maxPods: {{ kubelet_max_pods | default(110) }}
+clusterDNS:
+  - "{{ cluster_dns }}"

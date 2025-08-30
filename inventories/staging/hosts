@@ -1,0 +1,16 @@
+[master]
+master1.staging.example.com
+master2.staging.example.com
+
+[worker]
+worker1.staging.example.com
+worker2.staging.example.com
+worker3.staging.example.com
+
+[cluster:children]
+master
+worker
+
+[all:vars]
+ansible_connection=ssh
+ansible_python_interpreter=/usr/bin/python3

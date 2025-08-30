@@ -1,0 +1,18 @@
+---
+- name: Join nodes to Kubernetes cluster
+  hosts: "{{ target_nodes | default('worker') }}"
+  gather_facts: yes
+  become: yes
+  
+  tasks:
+    - name: Copy join command from first master
+      synchronize:
+        src: /root/join-command.sh
+        dest: /tmp/join-command.sh
+        mode: pull
+        delegate_to: "{{ groups['master'][0] }}"
+    
+    - name: Join node to cluster
+      command: bash /tmp/join-command.sh
+      args:
+        chdir: /root

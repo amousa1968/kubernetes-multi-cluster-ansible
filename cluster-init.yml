@@ -1,0 +1,28 @@
+---
+- name: Initialize Kubernetes cluster
+  hosts: master
+  gather_facts: yes
+  become: yes
+  vars:
+    k8s_version: "{{ k8s_version | default('1.28.0') }}"
+    pod_network_cidr: "{{ pod_network_cidr | default('10.244.0.0/16') }}"
+    service_cidr: "{{ service_cidr | default('10.96.0.0/12') }}"
+  
+  tasks:
+    - name: Create Kubernetes configuration directory
+      file:
+        path: /etc/kubernetes
+        state: directory
+        mode: '0755'
+    
+    - name: Generate kubeadm configuration
+      template:
+        src: roles/kubernetes/templates/kubeadm-config.yaml.j2
+        dest: /etc/kubernetes/kubeadm-config.yaml
+        mode: '0644'
+    
+    - name: Initialize cluster on first master
+      command: kubeadm init --config /etc/kubernetes/kubeadm-config.yaml --upload-certs
+      args:
+        chdir: /root
+      when: inventory_hostname == groups['master'][0]
