@@ -1,0 +1,93 @@
+---
+- name: Set up Kubernetes multi-cluster environment
+  hosts: all
+  gather_facts: true
+  become: true
+  vars_files:
+    - "inventories/{{ inventory }}/group_vars/all.yml"
+
+  roles:
+    - role: common
+      tags: common
+    - role: kubernetes
+      tags: kubernetes
+
+- name: Initialize master nodes
+  hosts: master
+  gather_facts: true
+  become: true
+  vars_files:
+    - "inventories/{{ inventory }}/group_vars/master.yml"
+
+  tasks:
+    - name: Create kubeadm configuration
+      template:
+        src: roles/kubernetes/templates/kubeadm-config.yaml.j2
+        dest: /etc/kubernetes/kubeadm-config.yaml
+        mode: '0644'
+
+    - name: Initialize Kubernetes cluster
+      command: kubeadm init --config /etc/kubernetes/kubeadm-config.yaml --upload-certs
+      args:
+        chdir: /root
+      register: kubeadm_init
+      when: inventory_hostname == groups['master'][0]
+      changed_when: false
+
+    - name: Save join command
+      copy:
+        content: |
+          #!/bin/bash
+          {{ kubeadm_init.stdout | regex_search('kubeadm join.*?--discovery-token-ca-cert-hash \\S+') }}
+        dest: "/root/join-command.sh"
+        mode: '0700'
+      when: inventory_hostname == groups['master'][0]
+
+    - name: Set up kubeconfig for root user
+      when: inventory_hostname == groups['master'][0]
+      block:
+        - name: Create .kube directory
+          file:
+            path: /root/.kube
+            state: directory
+            mode: '0700'
+
+        - name: Copy admin.conf
+          copy:
+            src: /etc/kubernetes/admin.conf
+            dest: /root/.kube/config
+            remote_src: true
+            mode: '0600'
+
+    - name: Install Calico network plugin
+      command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+      when: inventory_hostname == groups['master'][0]
+      changed_when: false
+
+- name: Join worker nodes to cluster
+  hosts: worker
+  gather_facts: true
+  become: true
+  vars_files:
+    - "inventories/{{ inventory }}/group_vars/worker.yml"
+
+  tasks:
+    - name: Copy join command from first master
+      fetch:
+        src: /root/join-command.sh
+        dest: /tmp/join-command-{{ inventory_hostname }}.sh
+        flat: yes
+      delegate_to: "{{ groups['master'][0] }}"
+      run_once: true
+      
+    - name: Distribute join command to workers
+      copy:
+        src: "/tmp/join-command-{{ inventory_hostname }}.sh"
+        dest: /tmp/join-command.sh
+        mode: '0755'
+
+    - name: Join worker to cluster
+      command: bash /tmp/join-command.sh
+      args:
+        chdir: /root
+      changed_when: false

@@ -1,0 +1,6 @@
+---
+# Worker node specific variables for staging
+kubelet_max_pods: 110
+kubelet_cgroup_driver: "systemd"
+node_labels: {}
+node_taints: []

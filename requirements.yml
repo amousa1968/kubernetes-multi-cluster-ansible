@@ -1,0 +1,12 @@
+---
+- src: git+https://github.com/geerlingguy/ansible-role-docker
+  version: master
+  name: geerlingguy.docker
+
+- src: git+https://github.com/geerlingguy/ansible-role-kubernetes
+  version: master
+  name: geerlingguy.kubernetes
+
+- src: git+https://github.com/cloudalchemy/ansible-node-exporter
+  version: master
+  name: cloudalchemy.node_exporter

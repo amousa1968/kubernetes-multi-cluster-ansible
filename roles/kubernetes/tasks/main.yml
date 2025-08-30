@@ -1,0 +1,50 @@
+---
+- name: Create Kubernetes directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  with_items:
+    - /etc/kubernetes
+    - /etc/kubernetes/manifests
+    - /var/lib/kubelet
+    - /var/lib/etcd
+
+- name: Download Kubernetes binaries script
+  copy:
+    src: files/scripts/download-k8s-binaries.sh
+    dest: /tmp/download-k8s-binaries.sh
+    mode: '0755'
+
+- name: Download Kubernetes binaries
+  command: /tmp/download-k8s-binaries.sh {{ k8s_version }}
+  args:
+    chdir: /tmp
+  changed_when: false
+
+- name: Install Kubernetes components
+  package:
+    name:
+      - kubelet={{ k8s_version }}-00
+      - kubeadm={{ k8s_version }}-00
+      - kubectl={{ k8s_version }}-00
+    state: present
+    allow_downgrades: true
+
+- name: Hold Kubernetes packages at current version
+  command: apt-mark hold kubelet kubeadm kubectl
+  when: ansible_os_family == "Debian"
+  changed_when: false
+
+- name: Configure kubelet
+  template:
+    src: kubelet.conf.j2
+    dest: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Start and enable kubelet service
+  systemd:
+    name: kubelet
+    state: started
+    enabled: true
