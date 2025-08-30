@@ -1,18 +1,19 @@
 ---
 - name: Join nodes to Kubernetes cluster
   hosts: "{{ target_nodes | default('worker') }}"
-  gather_facts: yes
-  become: yes
-  
+  gather_facts: true
+  become: true
+
   tasks:
     - name: Copy join command from first master
-      synchronize:
+      ansible.posix.synchronize:
         src: /root/join-command.sh
         dest: /tmp/join-command.sh
         mode: pull
         delegate_to: "{{ groups['master'][0] }}"
-    
+
     - name: Join node to cluster
       command: bash /tmp/join-command.sh
       args:
         chdir: /root
+      changed_when: false

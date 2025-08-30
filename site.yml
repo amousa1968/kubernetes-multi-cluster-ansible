@@ -1,11 +1,11 @@
 ---
 - name: Set up Kubernetes multi-cluster environment
   hosts: all
-  gather_facts: yes
-  become: yes
+  gather_facts: true
+  become: true
   vars_files:
     - "inventories/{{ inventory }}/group_vars/all.yml"
-  
+
   roles:
     - role: common
       tags: common
@@ -14,11 +14,11 @@
 
 - name: Initialize master nodes
   hosts: master
-  gather_facts: yes
-  become: yes
+  gather_facts: true
+  become: true
   vars_files:
     - "inventories/{{ inventory }}/group_vars/master.yml"
-  
+
   tasks:
     - name: Create kubeadm configuration
       template:
@@ -32,6 +32,7 @@
         chdir: /root
       register: kubeadm_init
       when: inventory_hostname == groups['master'][0]
+      changed_when: false
 
     - name: Save join command
       copy:
@@ -43,41 +44,43 @@
       when: inventory_hostname == groups['master'][0]
 
     - name: Set up kubeconfig for root user
+      when: inventory_hostname == groups['master'][0]
       block:
         - name: Create .kube directory
           file:
             path: /root/.kube
             state: directory
             mode: '0700'
-        
+
         - name: Copy admin.conf
           copy:
             src: /etc/kubernetes/admin.conf
             dest: /root/.kube/config
-            remote_ssrc: yes
+            remote_src: true
             mode: '0600'
-      when: inventory_hostname == groups['master'][0]
 
     - name: Install Calico network plugin
       command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
       when: inventory_hostname == groups['master'][0]
+      changed_when: false
 
 - name: Join worker nodes to cluster
   hosts: worker
-  gather_facts: yes
-  become: yes
+  gather_facts: true
+  become: true
   vars_files:
     - "inventories/{{ inventory }}/group_vars/worker.yml"
-  
+
   tasks:
     - name: Copy join command from first master
-      synchronize:
+      ansible.posix.synchronize:
         src: /root/join-command.sh
         dest: /tmp/join-command.sh
         mode: pull
         delegate_to: "{{ groups['master'][0] }}"
-    
+
     - name: Join worker to cluster
       command: bash /tmp/join-command.sh
       args:
         chdir: /root
+      changed_when: false

@@ -1,5 +1,5 @@
 ---
 # HAProxy configuration variables
-haproxy_frontend_port: 6443
-haproxy_backend_check_interval: 5000
-haproxy_backend_timeout: 50000
+ha_haproxy_frontend_port: 6443
+ha_haproxy_backend_check_interval: 5000
+ha_haproxy_backend_timeout: 50000

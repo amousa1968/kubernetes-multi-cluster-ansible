@@ -1,5 +1,5 @@
 ---
 # Kubernetes role variables
-kubelet_cgroup_driver: "systemd"
-kubelet_max_pods: 110
-kube_proxy_mode: "iptables"
+kubernetes_kubelet_cgroup_driver: "systemd"
+kubernetes_kubelet_max_pods: 110
+kubernetes_kube_proxy_mode: "iptables"
