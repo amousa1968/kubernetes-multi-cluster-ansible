@@ -10,4 +10,8 @@ skip_list:
   - 'name[missing]'
   - 'name[template]'
   - 'name[play]'
+exclude_paths:
+  - roles/geerlingguy.docker/
+  - roles/geerlingguy.kubernetes/
+  - roles/cloudalchemy.node_exporter/
 use_default_rules: true
