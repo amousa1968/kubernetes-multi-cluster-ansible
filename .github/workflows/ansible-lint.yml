@@ -2,17 +2,20 @@ name: Ansible Lint
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
 
 jobs:
   ansible-lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Run ansible-lint
-      uses: ansible/ansible-lint@main
-      with:
-        path: "."
-        rules: "*.yml"
+      - uses: actions/checkout@v4
+      
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r collections/requirements.yml
+      
+      - name: Run ansible-lint
+        uses: ansible/ansible-lint@main
+        with:
+          args: --write
