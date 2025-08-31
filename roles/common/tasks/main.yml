@@ -18,8 +18,9 @@
     state: present
 
 - name: Configure timezone
-  community.general.timezone:
-    name: "{{ timezone }}"
+  command: timedatectl set-timezone "{{ timezone }}"
+  ignore_errors: true
+  changed_when: false
 
 - name: Ensure NTP is running
   systemd:
