@@ -19,7 +19,7 @@
 
 - name: Configure timezone
   command: timedatectl set-timezone "{{ timezone }}"
-  ignore_errors: true
+  failed_when: false
   changed_when: false
 
 - name: Ensure NTP is running
