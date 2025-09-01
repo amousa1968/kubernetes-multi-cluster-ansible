@@ -30,7 +30,7 @@
 
 - name: Disable swap
   command: swapoff -a
-  ignore_errors: true
+  failed_when: false
   changed_when: false
 
 - name: Comment swap in /etc/fstab
