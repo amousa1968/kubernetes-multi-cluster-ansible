@@ -7,7 +7,7 @@ on:
     branches: [main, develop]
 
 env:
-  ANSIBLE_VERSION: "2.16"
+  ANSIBLE_VERSION: "11.1.0"
 
 jobs:
   # Lint and validate Ansible code
