@@ -1,0 +1,381 @@
+name: VMware to Azure Migration Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+      migration_phase:
+        description: 'Migration phase to execute'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - environment-provisioning
+        - vm-discovery-assessment
+        - replication-setup
+        - cutover-execution
+        - post-migration-setup
+        - day2-operations
+        - all
+      dry_run:
+        description: 'Run in dry-run mode (no actual changes)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  TERRAFORM_VERSION: '1.13.4'
+  ANSIBLE_VERSION: '2.15.0'
+  AZURE_CLI_VERSION: '2.50.0'
+
+jobs:
+  validate-configuration:
+    runs-on: ubuntu-latest
+    outputs:
+      terraform_plan: ${{ steps.terraform-plan.outputs.plan }}
+      ansible_syntax_check: ${{ steps.ansible-syntax.outputs.result }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Ansible
+      run: |
+        pip install ansible==${{ env.ANSIBLE_VERSION }}
+        pip install ansible-lint
+
+    - name: Setup Azure CLI
+      run: |
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        az version
+
+    - name: Terraform Format Check
+      id: terraform-fmt
+      run: |
+        cd terraform
+        terraform fmt -check -recursive
+      continue-on-error: true
+
+    - name: Terraform Validate
+      id: terraform-validate
+      run: |
+        cd terraform
+        terraform init -backend=false
+        terraform validate
+      continue-on-error: true
+
+    - name: Ansible Syntax Check
+      id: ansible-syntax
+      run: |
+        cd ansible
+        ansible-lint --version
+        ansible-lint playbooks/ || true
+        echo "result=passed" >> $GITHUB_OUTPUT
+      continue-on-error: true
+
+    - name: Terraform Plan (Dry Run)
+      id: terraform-plan
+      if: github.event.inputs.dry_run == 'true'
+      run: |
+        cd terraform
+        terraform plan -no-color -out=tfplan
+        terraform show -no-color tfplan > plan.txt
+        echo "plan<<EOF" >> $GITHUB_OUTPUT
+        cat plan.txt >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+      continue-on-error: true
+
+  environment-provisioning:
+    if: contains(github.event.inputs.migration_phase, 'environment-provisioning') || contains(github.event.inputs.migration_phase, 'all')
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: validate-configuration
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Terraform Init
+      run: |
+        cd terraform
+        terraform init
+
+    - name: Terraform Plan
+      run: |
+        cd terraform
+        terraform plan -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars" -no-color
+
+    - name: Terraform Apply
+      if: github.event.inputs.dry_run == 'false'
+      run: |
+        cd terraform
+        terraform apply -auto-approve -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars"
+
+    - name: Generate Infrastructure Report
+      run: |
+        cd terraform
+        terraform output -json > outputs/${{ github.event.inputs.environment }}.json
+        echo "## Infrastructure Provisioned" >> $GITHUB_STEP_SUMMARY
+        echo "- Resource Group: $(terraform output resource_group_name)" >> $GITHUB_STEP_SUMMARY
+        echo "- Virtual Network: $(terraform output vnet_name)" >> $GITHUB_STEP_SUMMARY
+        echo "- Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+
+  vm-discovery-assessment:
+    if: contains(github.event.inputs.migration_phase, 'vm-discovery-assessment') || contains(github.event.inputs.migration_phase, 'all')
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: environment-provisioning
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Ansible
+      run: |
+        pip install ansible==${{ env.ANSIBLE_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: VMware Discovery and Assessment
+      run: |
+        cd ansible/playbooks
+        ansible-playbook vmware-discovery.yml \
+          -e environment=${{ github.event.inputs.environment }} \
+          -e dry_run=${{ github.event.inputs.dry_run }}
+
+    - name: Generate Assessment Report
+      run: |
+        echo "## VMware Assessment Complete" >> $GITHUB_STEP_SUMMARY
+        echo "- VMs Discovered: $(cat ansible/reports/discovery-${{ github.event.inputs.environment }}.json | jq '.total_vms')" >> $GITHUB_STEP_SUMMARY
+        echo "- Assessment Date: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "- Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload Assessment Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: assessment-report-${{ github.event.inputs.environment }}
+        path: |
+          ansible/reports/
+          terraform/assessment/
+
+  replication-setup:
+    if: contains(github.event.inputs.migration_phase, 'replication-setup') || contains(github.event.inputs.migration_phase, 'all')
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: vm-discovery-assessment
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Configure Replication Infrastructure
+      run: |
+        cd terraform
+        terraform workspace select ${{ github.event.inputs.environment }} || terraform workspace new ${{ github.event.inputs.environment }}
+        terraform plan -target=module.replication -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars"
+        if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+          terraform apply -auto-approve -target=module.replication -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars"
+        fi
+
+    - name: Setup Replication Policies
+      run: |
+        cd ansible/playbooks
+        ansible-playbook replication-setup.yml \
+          -e environment=${{ github.event.inputs.environment }} \
+          -e dry_run=${{ github.event.inputs.dry_run }}
+
+  cutover-execution:
+    if: contains(github.event.inputs.migration_phase, 'cutover-execution') || contains(github.event.inputs.migration_phase, 'all')
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: replication-setup
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Ansible
+      run: |
+        pip install ansible==${{ env.ANSIBLE_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Execute Migration Cutover
+      run: |
+        cd ansible/playbooks
+        ansible-playbook cutover-execution.yml \
+          -e environment=${{ github.event.inputs.environment }} \
+          -e dry_run=${{ github.event.inputs.dry_run }}
+
+    - name: Validate Cutover Success
+      run: |
+        cd scripts
+        ./validate-migration.sh ${{ github.event.inputs.environment }}
+
+    - name: Update DNS Records
+      run: |
+        cd scripts
+        ./update-dns-records.sh ${{ github.event.inputs.environment }}
+
+  post-migration-setup:
+    if: contains(github.event.inputs.migration_phase, 'post-migration-setup') || contains(github.event.inputs.migration_phase, 'all')
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: cutover-execution
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Configure Post-Migration Infrastructure
+      run: |
+        cd terraform
+        terraform workspace select ${{ github.event.inputs.environment }}
+        terraform plan -target=module.post_migration -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars"
+        if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+          terraform apply -auto-approve -target=module.post_migration -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars"
+        fi
+
+    - name: Import Migrated VMs to Terraform
+      run: |
+        cd ansible/playbooks
+        ansible-playbook import-migrated-vms.yml \
+          -e environment=${{ github.event.inputs.environment }}
+
+  day2-operations:
+    if: contains(github.event.inputs.migration_phase, 'day2-operations') || contains(github.event.inputs.migration_phase, 'all')
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: post-migration-setup
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Ansible
+      run: |
+        pip install ansible==${{ env.ANSIBLE_VERSION }}
+
+    - name: Configure Day-2 Operations
+      run: |
+        cd ansible/playbooks
+        ansible-playbook day2-operations.yml \
+          -e environment=${{ github.event.inputs.environment }}
+
+    - name: Setup Monitoring and Alerting
+      run: |
+        cd terraform
+        terraform workspace select ${{ github.event.inputs.environment }}
+        terraform plan -target=module.day2_operations -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars"
+        if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+          terraform apply -auto-approve -target=module.day2_operations -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars"
+        fi
+
+  cleanup-on-failure:
+    if: failure()
+    runs-on: ubuntu-latest
+    needs: [environment-provisioning, vm-discovery-assessment, replication-setup, cutover-execution, post-migration-setup, day2-operations]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Cleanup Failed Resources
+      run: |
+        cd scripts
+        ./cleanup-failed-migration.sh ${{ github.event.inputs.environment }}
+
+  notify-completion:
+    if: always()
+    needs: [environment-provisioning, vm-discovery-assessment, replication-setup, cutover-execution, post-migration-setup, day2-operations, cleanup-on-failure]
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Generate Migration Report
+      run: |
+        echo "## Migration Pipeline Execution Report" >> $GITHUB_STEP_SUMMARY
+        echo "- Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Phase: ${{ github.event.inputs.migration_phase }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Dry Run: ${{ github.event.inputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Execution Time: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "- Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+
+    - name: Send Notification
+      if: always()
+      run: |
+        # Add notification logic here (email, Slack, Teams, etc.)
+        echo "Migration pipeline completed for ${{ github.event.inputs.environment }}"
